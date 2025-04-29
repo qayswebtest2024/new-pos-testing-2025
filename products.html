@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>نظام المبيعات</title>
+  <style>
+    * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    body { margin:0; display:flex; flex-direction:row-reverse; height:100vh; background:#fff; }
+
+    /* sidebar: وصل التحضير */
+    .sidebar { width:400px; background:#eceaea; padding:20px; overflow-y:auto; border-left:1px solid #ddd; }
+    .receipt-section h2 { margin-bottom:10px; }
+    .info p { margin:4px 0; font-weight:bold; }
+    .info input { width:100%; padding:4px; margin-top:2px; border:1px solid #ccc; border-radius:3px; font-size:13px; }
+    .separator { border-top:1px dashed #000; margin:8px 0; }
+    table { width:100%; border-collapse:collapse; margin-top:8px; font-size:13px; }
+    th, td { border:1px solid #000; padding:4px; text-align:center; }
+    th { background:#f2f2f2; }
+    .product-column { width:60%; }
+    .quantity-column { width:15%; }
+    .notes-row td { background:#f9f9f9; padding:4px; text-align:right; }
+    .notes-input { width:100%; font-size:12px; padding:4px; border:1px dashed #999; resize:vertical; }
+    .qrcodes { display:flex; justify-content:space-around; margin-top:10px; }
+    .qrcodes img { width:60px; height:60px; }
+    .footer { margin-top:auto; text-align:center; font-size:12px; }
+    .action-buttons { display:flex; gap:10px; margin-top:10px; }
+    .action-buttons button { flex:1; padding:6px; font-size:12px; cursor:pointer; background:#4361ee; color:#fff; border:none; border-radius:4px; }
+    .action-buttons button:hover { background:#364fc7; }
+
+    /* main: قائمة المنتجات */
+    .main { flex:1; padding:20px; overflow-y:auto; }
+    header { background:#4361ee; color:#fff; padding:15px; border-radius:10px; text-align:center; margin-bottom:20px; }
+    .categories { display:flex; gap:10px; margin-bottom:20px; overflow-x:auto; }
+    .category-btn { padding:8px 15px; border:1px solid #ccc; border-radius:20px; background:#fff; cursor:pointer; }
+    .category-btn.active { background:#4361ee; color:#fff; border-color:#4361ee; }
+    .products-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:15px; }
+    .product-card { background:#fff; border-radius:10px; box-shadow:0 2px 8px rgba(0,0,0,0.1); overflow:hidden; }
+    .product-image { height:100px; background:#eee; display:flex; align-items:center; justify-content:center; }
+    .product-info { padding:10px; text-align:center; }
+    .product-info div:first-child { font-weight:bold; margin-bottom:4px; }
+    .add-to-receipt-btn { margin-top:10px; background:#4361ee; color:#fff; border:none; padding:6px 12px; border-radius:5px; cursor:pointer; }
+
+    @media print {
+      body * { visibility:hidden }
+      .sidebar, .sidebar * { visibility:visible }
+      .sidebar { position:absolute; top:0; right:0; width:80mm; }
+      .main { display:none }
+      .action-buttons { display:none !important }
+      /* إخفاء صف الملاحظات الفارغ */
+      .notes-row { display:none !important }
+      .notes-row.has-content { display:table-row !important }
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+</head>
+<body>
+
+  <div class="sidebar">
+    <div class="receipt-section">
+      <h2>وصل التحضير</h2>
+      <div class="info">
+        <p>اسم العميل: <input id="clientName"></p>
+        <p>رقم الهاتف: <input id="clientPhone" oninput="updateQR()"></p>
+        <p>منطقة التوصيل: <input id="clientAddress"></p>
+        <p>وقت التوصيل: <input id="deliveryTime"></p>
+        <p>رابط اللوكيشن: <input id="locationLink" oninput="updateQR()"></p>
+      </div>
+      <div class="separator"></div>
+      <table>
+        <thead>
+          <tr>
+            <th class="product-column">اسم المنتج</th>
+            <th class="quantity-column">الكمية</th>
+          </tr>
+        </thead>
+        <tbody id="orderItems">
+          <!-- يُضاف هنا صفوف المنتج + صف الملاحظات دائمًا -->
+        </tbody>
+      </table>
+      <div class="action-buttons">
+        <button onclick="printReceipt()">🖨️ طباعة الوصل</button>
+        <button onclick="clearReceipt()">🗑️ تفريغ</button>
+      </div>
+      <div class="qrcodes">
+        <div><p>لوكيشن</p><img id="locationQR"></div>
+        <div><p>هاتف</p><img id="phoneQR"></div>
+      </div>
+      <div class="footer" id="dateTime"></div>
+    </div>
+  </div>
+
+  <div class="main">
+    <header><h1>قائمة المنتجات</h1></header>
+    <div class="categories">
+      <button class="category-btn active" data-category="all">الكل</button>
+      <button class="category-btn" data-category="offers">العروض</button>
+      <button class="category-btn" data-category="desserts">الحلويات</button>
+      <button class="category-btn" data-category="manaqish">مناقيش</button>
+      <button class="category-btn" data-category="pizza">بيتزا</button>
+      <button class="category-btn" data-category="pastry">معجنات</button>
+    </div>
+    <div class="products-grid" id="productsGrid"></div>
+  </div>
+
+<script>
+  const API_URL="https://script.google.com/macros/s/AKfycbyrqr8wYduPDLZ8TzR1g9uRSzOqMFj5ZtuyGqCR_elQcccVwat_2tbctfoNCIOt4Vqc8g/exec";
+  let selectedProducts = [];
+
+  async function fetchProducts(){ try{ let r=await fetch(API_URL);return await r.json() }catch{return[]} }
+
+  async function displayProducts(cat='all'){
+    let list = await fetchProducts(); localStorage.setItem('products', JSON.stringify(list));
+    if(cat!=='all') list = list.filter(p=>p.category===cat);
+    const grid = document.getElementById('productsGrid'); grid.innerHTML='';
+    list.forEach(p => {
+      let d = document.createElement('div'); d.className='product-card';
+      d.innerHTML = `
+        <div class="product-image">${p.image?`<img src="${p.image}">`:'🛒'}</div>
+        <div class="product-info">
+          <div>${p.name}</div>
+          <div>${p.price} د.أ</div>
+          <button class="add-to-receipt-btn" data-id="${p.id}">اضف إلى الفاتورة</button>
+        </div>`;
+      grid.appendChild(d);
+    });
+  }
+
+  document.addEventListener('click', e => {
+    if(e.target.classList.contains('add-to-receipt-btn')){
+      let id = e.target.dataset.id;
+      let prods = JSON.parse(localStorage.getItem('products')||'[]');
+      let pr = prods.find(x=>x.id==id); if(!pr) return;
+      let ord = JSON.parse(localStorage.getItem('selectedProducts')||'[]');
+      let idx = ord.findIndex(x=>x.id==id);
+      if(idx>-1) ord[idx].quantity++;
+      else ord.push({ id, name: pr.name, quantity:1, notes:'' });
+      localStorage.setItem('selectedProducts', JSON.stringify(ord));
+      renderOrder();
+    }
+  });
+
+  function renderOrder(){
+    let ord = JSON.parse(localStorage.getItem('selectedProducts')||'[]');
+    const tb = document.getElementById('orderItems'); tb.innerHTML='';
+    ord.forEach(it => {
+      // صف المنتج
+      let pr = document.createElement('tr');
+      pr.innerHTML = `<td>${it.name}</td><td>${it.quantity}</td>`;
+      tb.appendChild(pr);
+      // صف الملاحظات (دائمًا) مع إضافة الصنف has-content عند وجود نص
+      let nr = document.createElement('tr'); nr.className='notes-row';
+      let hasContent = it.notes && it.notes.trim();
+      if(hasContent) nr.classList.add('has-content');
+      nr.innerHTML = `<td colspan="2"><textarea class="notes-input" placeholder="أضف ملاحظات..." onchange="saveNote('${it.id}',this.value)">${it.notes||''}</textarea></td>`;
+      tb.appendChild(nr);
+    });
+  }
+
+  function saveNote(id, val){
+    let ord = JSON.parse(localStorage.getItem('selectedProducts')||'[]');
+    ord = ord.map(x=> x.id==id ? {...x, notes:val} : x);
+    localStorage.setItem('selectedProducts', JSON.stringify(ord));
+  }
+
+  function updateQR(){
+    let ph = document.getElementById('clientPhone').value;
+    let loc = encodeURIComponent(location.href);
+    document.getElementById('phoneQR').src = `https://api.qrserver.com/v1/create-qr-code/?size=60x60&data=tel:${ph}`;
+    document.getElementById('locationQR').src = `https://api.qrserver.com/v1/create-qr-code/?size=60x60&data=${loc}`;
+  }
+
+  function updateDate(){
+    let d = new Date();
+    document.getElementById('dateTime').textContent =
+      'تاريخ الوصول: ' + d.toLocaleDateString('ar-EG') + ' - ' + d.toLocaleTimeString('ar-EG',{hour12:false});
+  }
+
+  function printReceipt(){ renderOrder(); updateDate(); window.print(); }
+  function clearReceipt(){ localStorage.removeItem('selectedProducts'); renderOrder(); }
+
+  window.addEventListener('DOMContentLoaded', async ()=>{
+    await displayProducts(); renderOrder(); updateDate();
+    document.querySelectorAll('.category-btn').forEach(btn=>{
+      btn.onclick=()=>{
+        document.querySelectorAll('.category-btn').forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active');
+        displayProducts(btn.dataset.category);
+      };
+    });
+  });
+</script>
+</body>
+</html>
